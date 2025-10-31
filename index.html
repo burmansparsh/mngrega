@@ -1,0 +1,523 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MGNREGA District Performance Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f8fafc;
+        }
+        .status-box {
+            transition: all 0.3s ease;
+            cursor: pointer;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.06);
+        }
+        .status-box:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.1);
+        }
+        .text-huge { font-size: 2.5rem; line-height: 1; }
+        .text-hindi { font-size: 1.1rem; }
+    </style>
+</head>
+<body>
+
+    <!-- Firebase SDK Imports -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, onSnapshot, collection, query, limit, orderBy } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Global variables provided by the environment
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'mgnrega-performance-app';
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : { /* Mock Config */ };
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+        let app, db, auth, userId;
+
+        // Initialize Firebase and Authentication
+        async function initializeFirebase() {
+            try {
+                app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
+
+                // Set Firestore logging for debugging
+                setLogLevel('debug');
+
+                if (initialAuthToken) {
+                    await signInWithCustomToken(auth, initialAuthToken);
+                } else {
+                    await signInAnonymously(auth);
+                }
+                userId = auth.currentUser?.uid || crypto.randomUUID();
+                console.log("Firebase initialized. User ID:", userId);
+
+                // Start the main application logic after auth
+                window.db = db;
+                window.userId = userId;
+                window.loadDashboard();
+
+            } catch (error) {
+                console.error("Firebase Initialization Error:", error);
+                document.getElementById('loading-message').textContent = 'Error: Could not connect to data service.';
+            }
+        }
+
+        // Expose Firebase initialization to be called by window.onload
+        window.initializeFirebase = initializeFirebase;
+    </script>
+
+    <!-- Main Application Container -->
+    <div class="min-h-screen flex flex-col items-center p-4 sm:p-8">
+        <header class="w-full max-w-6xl mb-6 text-center">
+            <h1 class="text-3xl sm:text-4xl font-extrabold text-blue-700 mb-2">
+                <span class="text-huge">मनरेगा</span> जिला प्रदर्शन
+            </h1>
+            <p class="text-sm sm:text-base text-gray-600">
+                उत्तर प्रदेश (UTTAR PRADESH) | <span id="user-id-display">Loading User ID...</span>
+            </p>
+            <div id="loading-message" class="text-sm text-yellow-600 mt-2">Connecting to data...</div>
+        </header>
+
+        <!-- District Selector -->
+        <div class="w-full max-w-xl bg-white p-4 sm:p-6 rounded-xl shadow-lg mb-6 flex flex-col sm:flex-row items-center justify-between space-y-3 sm:space-y-0 sm:space-x-4">
+            <div class="w-full sm:w-1/2">
+                <label for="district-select" class="block text-sm font-medium text-gray-700 text-hindi">अपना जिला चुनें:</label>
+                <select id="district-select" class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 rounded-lg">
+                    <!-- Options will be populated by JS -->
+                </select>
+            </div>
+            <button id="geo-locate-btn" class="w-full sm:w-1/2 bg-green-500 hover:bg-green-600 text-white font-semibold py-2 px-4 rounded-lg transition duration-150 ease-in-out text-hindi flex items-center justify-center">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 mr-2" viewBox="0 0 20 20" fill="currentColor">
+                    <path fill-rule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clip-rule="evenodd" />
+                </svg>
+                मेरा जिला ढूंढें (Auto)
+            </button>
+            <span id="geo-status" class="text-xs text-gray-500 mt-1 sm:mt-0"></span>
+        </div>
+
+        <!-- Dashboard Content -->
+        <main class="w-full max-w-6xl">
+            <div id="dashboard-content" class="space-y-8">
+                <!-- Current Month Performance Section -->
+                <section>
+                    <h2 id="current-month-heading" class="text-2xl font-bold text-gray-800 mb-4 border-b pb-2"></h2>
+                    <div id="metric-cards" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                        <!-- Metric Cards will be populated here -->
+                    </div>
+                </section>
+
+                <!-- Comparison/History Chart Section -->
+                <section>
+                    <h2 class="text-2xl font-bold text-gray-800 mb-4 border-b pb-2 text-hindi">पिछला प्रदर्शन (Historical Performance)</h2>
+                    <div class="bg-white p-4 sm:p-6 rounded-xl shadow-lg">
+                        <canvas id="performanceChart" height="150"></canvas>
+                    </div>
+                </section>
+
+                <!-- Details Table Section (Optional/Advanced) -->
+                <section>
+                    <h2 class="text-2xl font-bold text-gray-800 mb-4 border-b pb-2 text-hindi">सभी महीने का डेटा (All Monthly Data)</h2>
+                    <div class="overflow-x-auto bg-white rounded-xl shadow-lg">
+                        <table class="min-w-full divide-y divide-gray-200">
+                            <thead class="bg-blue-50">
+                                <tr>
+                                    <th class="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider text-hindi">महीना</th>
+                                    <th class="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider text-hindi">परिवार</th>
+                                    <th class="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider text-hindi">औसत दिन</th>
+                                    <th class="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider text-hindi">खर्च (करोड़)</th>
+                                    <th class="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider text-hindi">लक्ष्य %</th>
+                                </tr>
+                            </thead>
+                            <tbody id="data-table-body" class="bg-white divide-y divide-gray-200">
+                                <!-- Table rows will be populated here -->
+                            </tbody>
+                        </table>
+                    </div>
+                </section>
+            </div>
+
+            <div id="empty-state" class="hidden text-center p-12 bg-white rounded-xl shadow-lg mt-8">
+                <h3 class="text-xl font-semibold text-gray-900 text-hindi">इस जिले का कोई डेटा उपलब्ध नहीं है।</h3>
+                <p class="mt-2 text-gray-500 text-hindi">कृपया दूसरा जिला चुनें या बाद में जांच करें।</p>
+            </div>
+        </main>
+    </div>
+
+    <script type="module">
+        // Import necessary Firestore functions from the global scope (set in the initial script)
+        const { db, userId } = window;
+        const districtSelect = document.getElementById('district-select');
+        const metricCards = document.getElementById('metric-cards');
+        const dataTableBody = document.getElementById('data-table-body');
+        const chartCanvas = document.getElementById('performanceChart');
+        const dashboardContent = document.getElementById('dashboard-content');
+        const emptyState = document.getElementById('empty-state');
+        const loadingMessage = document.getElementById('loading-message');
+        const geoLocateBtn = document.getElementById('geo-locate-btn');
+        const geoStatus = document.getElementById('geo-status');
+        const currentMonthHeading = document.getElementById('current-month-heading');
+
+        let performanceChart;
+        let chartData = [];
+        let allDistricts = [];
+
+        // Mock District Data for Uttar Pradesh (Real data would be fetched from Firestore)
+        const mockDistricts = [
+            { id: 'LKO', name_en: 'Lucknow', name_hi: 'लखनऊ' },
+            { id: 'GRZ', name_en: 'Ghaziabad', name_hi: 'ग़ाज़ियाबाद' },
+            { id: 'VNS', name_en: 'Varanasi', name_hi: 'वाराणसी' },
+            { id: 'ALD', name_en: 'Prayagraj (Allahabad)', name_hi: 'प्रयागराज' },
+            { id: 'AGR', name_en: 'Agra', name_hi: 'आगरा' },
+            { id: 'GKP', name_en: 'Gorakhpur', name_hi: 'गोरखपुर' },
+            // Add more UP districts here...
+        ];
+
+        // Mock Function to simulate data fetching (In production, this is how the data would look from Firestore)
+        function generateMockData(districtId) {
+            if (districtId === 'AGR') return null; // Simulate missing data
+            return {
+                district_id: districtId,
+                district_name_en: mockDistricts.find(d => d.id === districtId)?.name_en || 'Unknown',
+                district_name_hi: mockDistricts.find(d => d.id === districtId)?.name_hi || 'अज्ञात',
+                metrics: [
+                    { month_year: "2025-09", households_employed: 55000, avg_days_per_hh: 12.5, wages_paid_cr: 45.2, target_completion: 85, comparison: { hh_mom: 5, days_yoy: -3, wages_mom: 10 } },
+                    { month_year: "2025-08", households_employed: 52000, avg_days_per_hh: 12.0, wages_paid_cr: 41.0, target_completion: 80, comparison: {} },
+                    { month_year: "2025-07", households_employed: 50000, avg_days_per_hh: 11.5, wages_paid_cr: 39.5, target_completion: 78, comparison: {} },
+                    { month_year: "2025-06", households_employed: 48000, avg_days_per_hh: 11.0, wages_paid_cr: 38.0, target_completion: 75, comparison: {} },
+                ].sort((a, b) => new Date(a.month_year) - new Date(b.month_year)).reverse(),
+            };
+        }
+
+        // --- Core Functions ---
+
+        /**
+         * Renders the current month's performance in clear, visual metric cards.
+         * @param {Object} latestData The data for the current month.
+         */
+        function renderMetricCards(latestData) {
+            metricCards.innerHTML = '';
+            currentMonthHeading.textContent = `हाल का प्रदर्शन: ${latestData.month_year}`;
+
+            const metrics = [
+                {
+                    title_hi: 'परिवारों को मिला काम',
+                    value: latestData.households_employed.toLocaleString('en-IN'),
+                    unit: 'परिवार',
+                    comp_key: 'hh_mom',
+                    color: 'blue'
+                },
+                {
+                    title_hi: 'औसत काम के दिन',
+                    value: latestData.avg_days_per_hh,
+                    unit: 'दिन / परिवार',
+                    comp_key: 'days_yoy',
+                    color: 'purple'
+                },
+                {
+                    title_hi: 'कुल वेतन खर्च',
+                    value: latestData.wages_paid_cr.toFixed(2),
+                    unit: 'करोड़ रूपये (Cr)',
+                    comp_key: 'wages_mom',
+                    color: 'indigo'
+                },
+                {
+                    title_hi: 'लक्ष्य प्राप्ति दर',
+                    value: latestData.target_completion,
+                    unit: '% पूरा हुआ',
+                    comp_key: null,
+                    color: 'green'
+                }
+            ];
+
+            metrics.forEach(metric => {
+                const comparison = latestData.comparison[metric.comp_key] !== undefined ? latestData.comparison[metric.comp_key] : 0;
+                const isPositive = comparison >= 0;
+                const compColor = isPositive ? 'text-green-600' : 'text-red-600';
+                const compIcon = isPositive ? '<svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M14.707 10.707a1 1 0 01-1.414 0L10 7.414l-3.293 3.293a1 1 0 01-1.414-1.414l4-4a1 1 0 011.414 0l4 4a1 1 0 010 1.414z" clip-rule="evenodd" /></svg>' : '<svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M5.293 9.293a1 1 0 011.414 0L10 12.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd" /></svg>';
+
+                let content;
+
+                if (metric.comp_key) {
+                    // Standard Metric Card
+                    content = `
+                        <div class="flex flex-col">
+                            <span class="text-4xl font-bold text-${metric.color}-600">${metric.value}</span>
+                            <span class="text-base text-gray-500">${metric.unit}</span>
+                        </div>
+                        <div class="flex items-center mt-3 p-1 rounded-full ${isPositive ? 'bg-green-100' : 'bg-red-100'}">
+                            <span class="${compColor} font-semibold text-sm flex items-center">
+                                ${compIcon}
+                                ${Math.abs(comparison)}%
+                            </span>
+                            <span class="text-xs text-gray-500 ml-1">(पिछले महीने से)</span>
+                        </div>
+                    `;
+                } else {
+                    // Progress Bar for Target Completion
+                    const percentage = metric.value;
+                    const barColor = percentage >= 80 ? 'bg-green-500' : (percentage >= 50 ? 'bg-yellow-500' : 'bg-red-500');
+                    content = `
+                        <div class="text-huge font-extrabold text-${metric.color}-600 mb-2">${percentage}%</div>
+                        <div class="w-full bg-gray-200 rounded-full h-3">
+                            <div class="h-3 rounded-full ${barColor}" style="width: ${percentage}%"></div>
+                        </div>
+                        <span class="text-sm text-gray-500 mt-2">${percentage}% लक्ष्य हासिल किया गया</span>
+                    `;
+                }
+
+                const cardHTML = `
+                    <div class="status-box bg-white p-5 rounded-xl border-t-4 border-${metric.color}-500 flex flex-col justify-between">
+                        <h3 class="text-lg font-semibold text-gray-700 mb-4 text-hindi">${metric.title_hi}</h3>
+                        ${content}
+                    </div>
+                `;
+                metricCards.innerHTML += cardHTML;
+            });
+        }
+
+        /**
+         * Renders the historical data in a Chart.js line graph.
+         * @param {Array<Object>} history The array of monthly performance data.
+         */
+        function renderChart(history) {
+            const sortedHistory = [...history].sort((a, b) => new Date(a.month_year) - new Date(b.month_year));
+            const labels = sortedHistory.map(d => {
+                const date = new Date(d.month_year + '-01');
+                return date.toLocaleString('hi-IN', { month: 'short', year: 'numeric' });
+            });
+            const dataHouseholds = sortedHistory.map(d => d.households_employed);
+            const dataDays = sortedHistory.map(d => d.avg_days_per_hh);
+            const dataTarget = sortedHistory.map(d => d.target_completion);
+
+            if (performanceChart) {
+                performanceChart.destroy();
+            }
+
+            performanceChart = new Chart(chartCanvas, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [
+                        {
+                            label: 'परिवारों को मिला काम',
+                            data: dataHouseholds,
+                            borderColor: '#3b82f6', // Blue
+                            backgroundColor: 'rgba(59, 130, 246, 0.2)',
+                            fill: true,
+                            tension: 0.3,
+                            yAxisID: 'y1',
+                        },
+                        {
+                            label: 'औसत काम के दिन',
+                            data: dataDays,
+                            borderColor: '#8b5cf6', // Purple
+                            backgroundColor: '#8b5cf6',
+                            fill: false,
+                            tension: 0.3,
+                            yAxisID: 'y2',
+                            hidden: true // Start hidden to keep it simple
+                        },
+                        {
+                            label: 'लक्ष्य प्राप्ति (%)',
+                            data: dataTarget,
+                            borderColor: '#10b981', // Green
+                            backgroundColor: '#10b981',
+                            fill: false,
+                            tension: 0.3,
+                            yAxisID: 'y3',
+                            hidden: true // Start hidden
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    plugins: { legend: { position: 'top', labels: { usePointStyle: true, font: { size: 14 } } } },
+                    scales: {
+                        x: { display: true, title: { display: true, text: 'समय (Month)' } },
+                        y1: { type: 'linear', position: 'left', title: { display: true, text: 'परिवारों की संख्या', color: '#3b82f6' } },
+                        y2: { type: 'linear', position: 'right', title: { display: true, text: 'औसत दिन', color: '#8b5cf6' }, grid: { drawOnChartArea: false } },
+                        y3: { type: 'linear', position: 'right', title: { display: false, text: 'लक्ष्य (%)' }, grid: { drawOnChartArea: false }, min: 0, max: 100, hidden: true }
+                    }
+                }
+            });
+        }
+
+        /**
+         * Renders all historical data in a simple table.
+         * @param {Array<Object>} history The array of monthly performance data.
+         */
+        function renderTable(history) {
+            dataTableBody.innerHTML = '';
+            history.forEach(d => {
+                const row = document.createElement('tr');
+                row.className = 'hover:bg-gray-50';
+                row.innerHTML = `
+                    <td class="px-3 sm:px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">${d.month_year}</td>
+                    <td class="px-3 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-500">${d.households_employed.toLocaleString('en-IN')}</td>
+                    <td class="px-3 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-500">${d.avg_days_per_hh.toFixed(1)}</td>
+                    <td class="px-3 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-500">₹ ${d.wages_paid_cr.toFixed(2)} Cr</td>
+                    <td class="px-3 sm:px-6 py-4 whitespace-nowrap text-sm font-bold ${d.target_completion >= 80 ? 'text-green-600' : 'text-orange-500'}">${d.target_completion}%</td>
+                `;
+                dataTableBody.appendChild(row);
+            });
+        }
+
+        /**
+         * Main function to handle data subscription and UI updates.
+         * @param {string} districtId The ID of the currently selected district.
+         */
+        function subscribeToDistrictData(districtId) {
+            loadingMessage.textContent = `Loading data for ${districtSelect.options[districtSelect.selectedIndex].text}...`;
+            dashboardContent.classList.add('hidden');
+            emptyState.classList.add('hidden');
+
+            if (!db) {
+                console.error("Firestore not initialized.");
+                return;
+            }
+
+            // In a real-world scenario, data is stored at:
+            // /artifacts/{appId}/public/data/mgnrega_performance/{districtId}
+            const docRef = doc(db, `artifacts/${appId}/public/data/mgnrega_performance`, districtId);
+
+            // Using onSnapshot for real-time updates (as if the backend updates this cache)
+            const unsubscribe = onSnapshot(docRef, (docSnap) => {
+                let districtData;
+
+                if (docSnap.exists()) {
+                    // Production path: Data found in the Firestore cache
+                    districtData = docSnap.data();
+                    console.log("Live data received from Firestore:", districtData);
+                } else {
+                    // Fallback to Mock Data if Firestore is empty (Simulating an empty cache initially)
+                    console.warn(`No live data found for ${districtId}. Using mock data.`);
+                    districtData = generateMockData(districtId);
+                }
+
+                if (districtData && districtData.metrics && districtData.metrics.length > 0) {
+                    const latestData = districtData.metrics[0];
+                    renderMetricCards(latestData);
+                    renderChart(districtData.metrics);
+                    renderTable(districtData.metrics);
+
+                    loadingMessage.textContent = '';
+                    dashboardContent.classList.remove('hidden');
+                    emptyState.classList.add('hidden');
+
+                } else {
+                    // No data found or mock returns null (simulating missing API data)
+                    dashboardContent.classList.add('hidden');
+                    emptyState.classList.remove('hidden');
+                    loadingMessage.textContent = '';
+                }
+            }, (error) => {
+                // Firestore error handling
+                console.error("Firestore listen error:", error);
+                loadingMessage.textContent = 'Error fetching data. Displaying fallback data.';
+
+                // Show mock data as an emergency fallback
+                const fallbackData = generateMockData(districtId);
+                if (fallbackData) {
+                    const latestData = fallbackData.metrics[0];
+                    renderMetricCards(latestData);
+                    renderChart(fallbackData.metrics);
+                    renderTable(fallbackData.metrics);
+                    dashboardContent.classList.remove('hidden');
+                    emptyState.classList.add('hidden');
+                } else {
+                    dashboardContent.classList.add('hidden');
+                    emptyState.classList.remove('hidden');
+                }
+            });
+
+            return unsubscribe; // Return the unsubscribe function to clean up later
+        }
+
+        // --- Event Handlers & Initialization ---
+
+        let currentUnsubscribe = null;
+
+        function handleDistrictChange() {
+            const selectedDistrictId = districtSelect.value;
+            if (currentUnsubscribe) {
+                currentUnsubscribe(); // Clean up previous listener
+            }
+
+            // Only subscribe if a valid district is selected
+            if (selectedDistrictId) {
+                currentUnsubscribe = subscribeToDistrictData(selectedDistrictId);
+            }
+        }
+
+        districtSelect.addEventListener('change', handleDistrictChange);
+
+        // BONUS: Geolocate User's District
+        geoLocateBtn.addEventListener('click', () => {
+            geoStatus.textContent = 'लोकेशन पता कर रहे हैं...';
+            geoLocateBtn.disabled = true;
+
+            if (navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition((position) => {
+                    const lat = position.coords.latitude;
+                    const lon = position.coords.longitude;
+                    geoStatus.textContent = `Location: ${lat.toFixed(2)}, ${lon.toFixed(2)}`;
+
+                    // --- Real-world Implementation for Geo-location ---
+                    // 1. Send (lat, lon) to a serverless function.
+                    // 2. Serverless function calls a Reverse Geocoding API (e.g., Google Maps, OpenCage) to get the address.
+                    // 3. Serverless function extracts the 'District' name from the address components.
+                    // 4. Serverless function returns the corresponding 'District ID' (e.g., LKO, GRZ).
+
+                    // --- MOCKING Geo-location Result (For this demo) ---
+                    // Simulate that coordinates fell into the Lucknow district area
+                    const mockDistrictId = 'LKO';
+
+                    districtSelect.value = mockDistrictId;
+                    handleDistrictChange();
+
+                    const districtName = mockDistricts.find(d => d.id === mockDistrictId)?.name_hi;
+                    geoStatus.textContent = `आपका जिला: ${districtName} (Detected)`;
+                    geoLocateBtn.disabled = false;
+
+                }, (error) => {
+                    console.error("Geolocation Error:", error);
+                    geoStatus.textContent = `लोकेशन नहीं मिली: ${error.message}`;
+                    geoLocateBtn.disabled = false;
+                });
+            } else {
+                geoStatus.textContent = 'Geolocation is not supported by this browser.';
+                geoLocateBtn.disabled = false;
+            }
+        });
+
+        // Initial setup on window load
+        window.loadDashboard = function() {
+            document.getElementById('user-id-display').textContent = `User ID: ${userId.substring(0, 8)}...`;
+
+            // Populate the District Dropdown
+            districtSelect.innerHTML = '<option value="">--- जिला चुनें (Select District) ---</option>';
+            mockDistricts.forEach(district => {
+                const option = document.createElement('option');
+                option.value = district.id;
+                option.textContent = `${district.name_hi} (${district.name_en})`;
+                districtSelect.appendChild(option);
+            });
+
+            loadingMessage.textContent = 'Please select a district to view performance.';
+            dashboardContent.classList.add('hidden');
+        };
+
+        // Start Firebase Initialization
+        window.initializeFirebase();
+
+    </script>
+</body>
+</html>
